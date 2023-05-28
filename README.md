@@ -14,6 +14,7 @@
     - a droplet generator, remover, lister
     - export DO_API_KEY=your_api_key
     - help
-        - go run main.go 			= create a new droplet
-        - go run main.go -drops 	= list all droplets
-        - go run main.go -dry 		= delete all deployed droplets
+        - go run main.go 			    = create a new droplet
+        - go run main.go -drops 	    = list all droplets
+        - go run main.go -dry 		    = delete all deployed droplets
+        - go run main.go -fleet [int]   = spawns [int] drops(max 25)
