@@ -1,8 +1,9 @@
 // File: main.go
 // export DO_API_KEY=your_api_key
 // go run main.go 			= create a new droplet
-// go run main.go -drops 	= list all droplets
-// go run main.go -dry 		= delete all deployed droplets
+// go run main.go --drops 	= list all droplets
+// go run main.go --dry 		= delete all deployed droplets
+// go run main.go --fleet 5 = creates 5 droplets (max25)
 package main
 
 import (
@@ -12,14 +13,13 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 
+	"github.com/projectdiscovery/goflags"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -50,6 +50,12 @@ type Droplets struct {
 type SSHKey struct {
 	Name      string `json:"name"`
 	PublicKey string `json:"public_key"`
+}
+
+type options struct {
+	listDroplets bool
+	deleteAll    bool
+	fleet        int
 }
 
 func listDroplets() {
@@ -130,62 +136,64 @@ func deleteDroplets() {
 	fmt.Println("All droplets deleted successfully.")
 }
 
-func main() {
-	list := flag.Bool("drops", false, "List all droplets")
-	dryRun := flag.Bool("dry", false, "Dry run: delete all deployed droplets")
-	flag.Parse()
+func createDroplet(name string) {
+	privateKeyPath := "id_rsa"
+	publicKeyPath := "id_rsa.pub"
 
-	if *list {
-		listDroplets()
-		return
+	// Check if private key file exists
+	if _, err := os.Stat(privateKeyPath); os.IsNotExist(err) {
+		// Private key doesn't exist, generate a new one
+		privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// Generate and write private key as PEM
+		privDER := x509.MarshalPKCS1PrivateKey(privateKey)
+		privBLK := pem.Block{
+			Type:    "RSA PRIVATE KEY",
+			Headers: nil,
+			Bytes:   privDER,
+		}
+
+		privPEM := pem.EncodeToMemory(&privBLK)
+		if err = ioutil.WriteFile(privateKeyPath, privPEM, 0600); err != nil {
+			log.Fatal(err)
+		}
+
+		// Generate and write public key
+		pub, err := ssh.NewPublicKey(&privateKey.PublicKey)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		pubBytes := ssh.MarshalAuthorizedKey(pub)
+		if err = ioutil.WriteFile(publicKeyPath, pubBytes, 0644); err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	if *dryRun {
-		deleteDroplets()
-		return
-	}
-
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	// Read the public key file
+	pubBytes, err := ioutil.ReadFile(publicKeyPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Generate and write private key as PEM
-	privDER := x509.MarshalPKCS1PrivateKey(privateKey)
-	privBLK := pem.Block{
-		Type:    "RSA PRIVATE KEY",
-		Headers: nil,
-		Bytes:   privDER,
+	// Create new Droplet with SSH key
+	droplet := CreateDroplet{
+		Name:    name,
+		Region:  "nyc1",
+		Size:    "s-1vcpu-1gb",
+		Image:   "ubuntu-20-04-x64",
+		SSHKeys: []string{string(pubBytes)},
 	}
 
-	privPEM := pem.EncodeToMemory(&privBLK)
-	if err = ioutil.WriteFile("id_rsa", privPEM, 0600); err != nil {
-		log.Fatal(err)
-	}
-
-	// Generate and write public key
-	pub, err := ssh.NewPublicKey(&privateKey.PublicKey)
+	b, err := json.Marshal(droplet)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	pubBytes := ssh.MarshalAuthorizedKey(pub)
-	if err = ioutil.WriteFile("id_rsa.pub", pubBytes, 0644); err != nil {
-		log.Fatal(err)
-	}
-
-	// Create new SSH key on DO account
-	sshKey := SSHKey{
-		Name:      "example",
-		PublicKey: string(pubBytes),
-	}
-
-	b, err := json.Marshal(sshKey)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	req, err := http.NewRequest("POST", "https://api.digitalocean.com/v2/account/keys", bytes.NewBuffer(b))
+	req, err := http.NewRequest("POST", "https://api.digitalocean.com/v2/droplets", bytes.NewBuffer(b))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -202,39 +210,46 @@ func main() {
 
 	body, _ := ioutil.ReadAll(resp.Body)
 
-	var result map[string]interface{}
-	json.Unmarshal(body, &result)
+	var dropletResult Droplet
+	json.Unmarshal(body, &dropletResult)
 
-	keyID := strconv.Itoa(int(result["ssh_key"].(map[string]interface{})["id"].(float64)))
+	fmt.Printf("Created droplet with ID: %d\n", dropletResult.ID)
+}
 
-	// Create new Droplet with SSH key
-	droplet := CreateDroplet{
-		Name:    "example",
-		Region:  "nyc1",
-		Size:    "s-1vcpu-1gb",
-		Image:   "ubuntu-20-04-x64",
-		SSHKeys: []string{keyID},
+func main() {
+	opts := &options{}
+
+	flagSet := goflags.NewFlagSet()
+	flagSet.SetDescription("DigitalOcean Droplet Management")
+
+	flagSet.BoolVar(&opts.listDroplets, "drops", false, "List all droplets")
+	flagSet.BoolVar(&opts.deleteAll, "dry", false, "Dry run: delete all deployed droplets")
+	flagSet.IntVar(&opts.fleet, "fleet", 0, "Create a fleet of droplets. Specify the number of droplets to create, up to a maximum of 25.")
+
+	if err := flagSet.Parse(); err != nil {
+		log.Fatalf("Could not parse flags: %s\n", err)
 	}
 
-	b, err = json.Marshal(droplet)
-	if err != nil {
-		log.Fatal(err)
+	if opts.listDroplets {
+		listDroplets()
+		return
 	}
 
-	req, err = http.NewRequest("POST", "https://api.digitalocean.com/v2/droplets", bytes.NewBuffer(b))
-	if err != nil {
-		log.Fatal(err)
+	if opts.deleteAll {
+		deleteDroplets()
+		return
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+os.Getenv("DO_API_KEY"))
+	if opts.fleet > 0 {
+		if opts.fleet > 25 {
+			log.Fatalf("Cannot create more than 25 droplets.")
+		}
 
-	resp, err = client.Do(req)
-	if err != nil {
-		log.Fatal(err)
+		for i := 0; i < opts.fleet; i++ {
+			createDroplet(fmt.Sprintf("example-%d", i+1))
+		}
+		return
 	}
-	defer resp.Body.Close()
 
-	body, _ = ioutil.ReadAll(resp.Body)
-	log.Println(string(body))
+	createDroplet("example")
 }
