@@ -30,7 +30,7 @@ Flags:
         - id_rsa folder ssh_keys/[dropName]/id_rsa ✅
             - generating works
             - deleting upon dry works aswell
-        - install/setup tools/env on droplet 
+        - install/setup tools/env on droplet 🚧
     - ideas:
         - interactive terminal for general setup
 
