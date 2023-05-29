@@ -11,10 +11,16 @@
     - deno version does not work
 
 - drop-gen
-    - a droplet generator, remover, lister
-    - export DO_API_KEY=your_api_key
-    - help
-        - go run main.go 			    = create a new droplet
-        - go run main.go -drops 	    = list all droplets
-        - go run main.go -dry 		    = delete all deployed droplets
-        - go run main.go -fleet [int]   = spawns [int] drops(max 25)
+    - go run main.go -h                
+```bash
+DigitalOcean Droplet Management
+
+Flags:
+   -drops         List all droplets
+   -dry           Dry run: delete all deployed droplets
+   -fleet string  Name of the fleet (default: droplet) (default "droplet")
+   -amount int    Specify the number of droplets to create, up to a maximum of 25. (default 2)
+   -sizes         List all available sizes at DigitalOcean
+   -size string   Specify the size to check available regions
+```
+
