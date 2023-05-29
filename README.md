@@ -24,6 +24,9 @@ Flags:
    -size string   Specify the size to check available regions
 ```
     - todo's:
+        - createDroplet()
+            - check for drops.json first
+                - based on that increment [name] if the [name] is already in drops.json
         - install/setup tools/env on droplet
     - ideas:
         - interactive terminal for general setup
