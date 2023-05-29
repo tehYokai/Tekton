@@ -93,7 +93,6 @@ type options struct {
 	amount       int
 	sizes        bool
 	size         string
-	dryRun       bool
 }
 
 func listSizes() {
@@ -192,7 +191,7 @@ func listDroplets() {
 	}
 }
 
-func deleteDroplets(dryRun bool) {
+func deleteDroplets() {
 	req, err := http.NewRequest("GET", "https://api.digitalocean.com/v2/droplets", nil)
 	if err != nil {
 		log.Fatal(err)
@@ -241,10 +240,6 @@ func deleteDroplets(dryRun bool) {
 			deleteKeyDirectory(droplet.Name)
 		}
 	}
-
-	if !dryRun {
-		deleteDropletsByID(droplets.Droplets)
-	}
 }
 
 func deleteKeyDirectory(dropletName string) {
@@ -252,53 +247,19 @@ func deleteKeyDirectory(dropletName string) {
 	err := os.RemoveAll(keyDir)
 	if err != nil {
 		log.Printf("Failed to delete key directory for droplet '%s': %s\n", dropletName, err)
-	} else {
-		log.Printf("Deleted key directory for droplet '%s'\n", dropletName)
-	}
+	} // else {
+	// log.Printf("Deleted key directory for droplet '%s'\n", dropletName)
+	// }
 }
 
-func deleteDropletsByID(droplets []Droplet) {
-	dropsJSON, err := ioutil.ReadFile("drops.json")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var drops struct {
-		Droplets []Droplet `json:"droplets"`
-	}
-	err = json.Unmarshal(dropsJSON, &drops)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	remainingDroplets := make([]Droplet, 0, len(drops.Droplets))
-	for _, existingDroplet := range drops.Droplets {
-		if !contains(droplets, existingDroplet) {
-			remainingDroplets = append(remainingDroplets, existingDroplet)
-		}
-	}
-
-	updatedDropsJSON, err := json.Marshal(struct {
-		Droplets []Droplet `json:"droplets"`
-	}{Droplets: remainingDroplets})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = ioutil.WriteFile("drops.json", updatedDropsJSON, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func contains(droplets []Droplet, droplet Droplet) bool {
-	for _, d := range droplets {
-		if d.ID == droplet.ID {
-			return true
-		}
-	}
-	return false
-}
+// func contains(droplets []Droplet, droplet Droplet) bool {
+// 	for _, d := range droplets {
+// 		if d.ID == droplet.ID {
+// 			return true
+// 		}
+// 	}
+// 	return false
+// }
 
 func createDroplet(name string, count int) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -549,7 +510,6 @@ func main() {
 	flagSet.IntVar(&opts.amount, "amount", 2, "Specify the number of droplets to create, up to a maximum of 25.")
 	flagSet.BoolVar(&opts.sizes, "sizes", false, "List all available sizes at DigitalOcean")
 	flagSet.StringVar(&opts.size, "size", "", "Specify the size to check available regions")
-	flagSet.BoolVar(&opts.dryRun, "dryRun", false, "Dry run: delete droplets without removing key directories")
 
 	if err := flagSet.Parse(); err != nil {
 		log.Fatalf("Could not parse flags: %s\n", err)
@@ -566,7 +526,7 @@ func main() {
 	}
 
 	if opts.deleteAll {
-		deleteDroplets(opts.dryRun)
+		deleteDroplets()
 		return
 	}
 
