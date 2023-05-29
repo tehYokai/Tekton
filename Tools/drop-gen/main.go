@@ -177,6 +177,11 @@ func listDroplets() {
 		log.Fatal(err)
 	}
 
+	if len(droplets.Droplets) == 0 {
+		fmt.Println("No droplets to display.")
+		return
+	}
+
 	for _, droplet := range droplets.Droplets {
 		ipAddress := ""
 		if len(droplet.Networks.V4) > 0 {
