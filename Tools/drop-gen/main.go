@@ -3,7 +3,7 @@
 // go run main.go 			= create a new droplet
 // go run main.go --drops 	= list all droplets
 // go run main.go --dry 		= delete all deployed droplets
-// go run main.go --fleet 5 = creates 5 droplets (max25)
+// go run main.go --fleet 5 = creates 5 droplets
 package main
 
 import (
@@ -18,6 +18,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/projectdiscovery/goflags"
 	"golang.org/x/crypto/ssh"
@@ -45,6 +46,10 @@ type CreateDroplet struct {
 
 type Droplets struct {
 	Droplets []Droplet `json:"droplets"`
+}
+
+type CreateDropletResponse struct {
+	Droplet Droplet `json:"droplet"`
 }
 
 type SSHKey struct {
@@ -137,63 +142,47 @@ func deleteDroplets() {
 }
 
 func createDroplet(name string) {
-	privateKeyPath := "id_rsa"
-	publicKeyPath := "id_rsa.pub"
-
-	// Check if private key file exists
-	if _, err := os.Stat(privateKeyPath); os.IsNotExist(err) {
-		// Private key doesn't exist, generate a new one
-		privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// Generate and write private key as PEM
-		privDER := x509.MarshalPKCS1PrivateKey(privateKey)
-		privBLK := pem.Block{
-			Type:    "RSA PRIVATE KEY",
-			Headers: nil,
-			Bytes:   privDER,
-		}
-
-		privPEM := pem.EncodeToMemory(&privBLK)
-		if err = ioutil.WriteFile(privateKeyPath, privPEM, 0600); err != nil {
-			log.Fatal(err)
-		}
-
-		// Generate and write public key
-		pub, err := ssh.NewPublicKey(&privateKey.PublicKey)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		pubBytes := ssh.MarshalAuthorizedKey(pub)
-		if err = ioutil.WriteFile(publicKeyPath, pubBytes, 0644); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	// Read the public key file
-	pubBytes, err := ioutil.ReadFile(publicKeyPath)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Create new Droplet with SSH key
-	droplet := CreateDroplet{
-		Name:    name,
-		Region:  "nyc1",
-		Size:    "s-1vcpu-1gb",
-		Image:   "ubuntu-20-04-x64",
-		SSHKeys: []string{string(pubBytes)},
+	// Generate and write private key as PEM
+	privDER := x509.MarshalPKCS1PrivateKey(privateKey)
+	privBLK := pem.Block{
+		Type:    "RSA PRIVATE KEY",
+		Headers: nil,
+		Bytes:   privDER,
 	}
 
-	b, err := json.Marshal(droplet)
+	privPEM := pem.EncodeToMemory(&privBLK)
+	if err = ioutil.WriteFile("id_rsa", privPEM, 0600); err != nil {
+		log.Fatal(err)
+	}
+
+	// Generate and write public key
+	pub, err := ssh.NewPublicKey(&privateKey.PublicKey)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	req, err := http.NewRequest("POST", "https://api.digitalocean.com/v2/droplets", bytes.NewBuffer(b))
+	pubBytes := ssh.MarshalAuthorizedKey(pub)
+	if err = ioutil.WriteFile("id_rsa.pub", pubBytes, 0644); err != nil {
+		log.Fatal(err)
+	}
+
+	// Create new SSH key on DO account
+	sshKey := SSHKey{
+		Name:      name,
+		PublicKey: string(pubBytes),
+	}
+
+	b, err := json.Marshal(sshKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.digitalocean.com/v2/account/keys", bytes.NewBuffer(b))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -210,10 +199,45 @@ func createDroplet(name string) {
 
 	body, _ := ioutil.ReadAll(resp.Body)
 
-	var dropletResult Droplet
-	json.Unmarshal(body, &dropletResult)
+	var result map[string]interface{}
+	json.Unmarshal(body, &result)
 
-	fmt.Printf("Created droplet with ID: %d\n", dropletResult.ID)
+	keyID := strconv.Itoa(int(result["ssh_key"].(map[string]interface{})["id"].(float64)))
+
+	// Create new Droplet with SSH key
+	droplet := CreateDroplet{
+		Name:    name,
+		Region:  "nyc1",
+		Size:    "s-1vcpu-1gb",
+		Image:   "ubuntu-20-04-x64",
+		SSHKeys: []string{keyID},
+	}
+
+	b, err = json.Marshal(droplet)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	req, err = http.NewRequest("POST", "https://api.digitalocean.com/v2/droplets", bytes.NewBuffer(b))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("DO_API_KEY"))
+
+	resp, err = client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ = ioutil.ReadAll(resp.Body)
+
+	var dropletResponse CreateDropletResponse
+	json.Unmarshal(body, &dropletResponse)
+
+	fmt.Printf("Created droplet with ID: %d\n", dropletResponse.Droplet.ID)
 }
 
 func main() {
