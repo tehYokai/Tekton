@@ -27,7 +27,9 @@ Flags:
         - createDroplet() ✅
             - check for drops.json first
                 - based on that increment [name] if the [name] is already in drops.json 
-        - id_rsa folder ssh_keys/[dropName]/id_rsa 🚧
+        - id_rsa folder ssh_keys/[dropName]/id_rsa ✅
+            - generating works
+            - deleting upon dry works aswell
         - install/setup tools/env on droplet 
     - ideas:
         - interactive terminal for general setup

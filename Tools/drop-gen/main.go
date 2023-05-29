@@ -12,8 +12,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/projectdiscovery/goflags"
 	"golang.org/x/crypto/ssh"
@@ -29,6 +31,11 @@ type Droplet struct {
 	Image struct {
 		Slug string `json:"slug"`
 	} `json:"image"`
+	Networks struct {
+		V4 []struct {
+			IPAddress string `json:"ip_address"`
+		} `json:"v4"`
+	} `json:"networks"`
 }
 
 type CreateDroplet struct {
@@ -86,6 +93,7 @@ type options struct {
 	amount       int
 	sizes        bool
 	size         string
+	dryRun       bool
 }
 
 func listSizes() {
@@ -136,12 +144,50 @@ func listDroplets() {
 	var droplets Droplets
 	json.Unmarshal(body, &droplets)
 
+	dropsJSON, err := ioutil.ReadFile("drops.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var existingDroplets Droplets
+	if err := json.Unmarshal(dropsJSON, &existingDroplets); err != nil {
+		log.Fatal(err)
+	}
+
+	for i, droplet := range droplets.Droplets {
+		ipAddress := ""
+		if len(droplet.Networks.V4) > 0 {
+			ipAddress = droplet.Networks.V4[0].IPAddress
+		}
+
+		if i < len(existingDroplets.Droplets) {
+			existingDroplets.Droplets[i].Networks.V4 = append(existingDroplets.Droplets[i].Networks.V4, struct {
+				IPAddress string `json:"ip_address"`
+			}{IPAddress: ipAddress})
+		}
+	}
+
+	dropsJSON, err = json.Marshal(existingDroplets)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = ioutil.WriteFile("drops.json", dropsJSON, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	for _, droplet := range droplets.Droplets {
-		fmt.Printf("ID: %d, Name: %s, Region: %s, Image: %s\n", droplet.ID, droplet.Name, droplet.Region.Slug, droplet.Image.Slug)
+		ipAddress := ""
+		if len(droplet.Networks.V4) > 0 {
+			ipAddress = droplet.Networks.V4[0].IPAddress
+		}
+		fmt.Printf("ID: %d, Name: %s, Region: %s, Image: %s, IP: %s\n",
+			droplet.ID, droplet.Name, droplet.Region.Slug, droplet.Image.Slug, ipAddress)
 	}
 }
 
-func deleteDroplets() {
+func deleteDroplets(dryRun bool) {
 	req, err := http.NewRequest("GET", "https://api.digitalocean.com/v2/droplets", nil)
 	if err != nil {
 		log.Fatal(err)
@@ -167,9 +213,7 @@ func deleteDroplets() {
 		return
 	}
 
-	dropletIDs := make([]int, 0, len(droplets.Droplets))
 	for _, droplet := range droplets.Droplets {
-		dropletIDs = append(dropletIDs, droplet.ID)
 		deleteURL := fmt.Sprintf("https://api.digitalocean.com/v2/droplets/%d", droplet.ID)
 		req, err := http.NewRequest("DELETE", deleteURL, nil)
 		if err != nil {
@@ -189,13 +233,26 @@ func deleteDroplets() {
 			log.Printf("Failed to delete droplet with ID %d\n", droplet.ID)
 		} else {
 			log.Printf("Deleted droplet with ID %d\n", droplet.ID)
+			deleteKeyDirectory(droplet.Name)
 		}
 	}
 
-	deleteDropletsByID(dropletIDs)
+	if !dryRun {
+		deleteDropletsByID(droplets.Droplets)
+	}
 }
 
-func deleteDropletsByID(ids []int) {
+func deleteKeyDirectory(dropletName string) {
+	keyDir := filepath.Join("keys", dropletName)
+	err := os.RemoveAll(keyDir)
+	if err != nil {
+		log.Printf("Failed to delete key directory for droplet '%s': %s\n", dropletName, err)
+	} else {
+		log.Printf("Deleted key directory for droplet '%s'\n", dropletName)
+	}
+}
+
+func deleteDropletsByID(droplets []Droplet) {
 	dropsJSON, err := ioutil.ReadFile("drops.json")
 	if err != nil {
 		log.Fatal(err)
@@ -210,9 +267,9 @@ func deleteDropletsByID(ids []int) {
 	}
 
 	remainingDroplets := make([]Droplet, 0, len(drops.Droplets))
-	for _, droplet := range drops.Droplets {
-		if !contains(ids, droplet.ID) {
-			remainingDroplets = append(remainingDroplets, droplet)
+	for _, existingDroplet := range drops.Droplets {
+		if !contains(droplets, existingDroplet) {
+			remainingDroplets = append(remainingDroplets, existingDroplet)
 		}
 	}
 
@@ -229,9 +286,9 @@ func deleteDropletsByID(ids []int) {
 	}
 }
 
-func contains(ids []int, id int) bool {
-	for _, val := range ids {
-		if val == id {
+func contains(droplets []Droplet, droplet Droplet) bool {
+	for _, d := range droplets {
+		if d.ID == droplet.ID {
 			return true
 		}
 	}
@@ -393,6 +450,9 @@ func createDroplet(name string, count int) {
 		}
 
 		droplets = append(droplets, newDroplet)
+
+		// Save SSH key for the droplet
+		saveSSHKey(dropletName, privPEM, pubBytes)
 	}
 
 	existingDroplets.Droplets = append(existingDroplets.Droplets, droplets...)
@@ -406,6 +466,13 @@ func createDroplet(name string, count int) {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Wait for 10 seconds before listing droplets
+	fmt.Println("Waiting for 1 minute to get droplet IPs")
+	time.Sleep(60 * time.Second)
+
+	// List droplets
+	listDroplets()
 }
 
 func getRegionsBySize(sizeSlug string) {
@@ -442,6 +509,29 @@ func getRegionsBySize(sizeSlug string) {
 	fmt.Printf("Size '%s' not found.\n", sizeSlug)
 }
 
+// saveSSHKey saves the SSH key for the droplet in the specified folder
+func saveSSHKey(dropletName string, privateKey, publicKey []byte) {
+	keyDir := filepath.Join("keys", dropletName)
+	err := os.MkdirAll(keyDir, 0700)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	privateKeyPath := filepath.Join(keyDir, "id_rsa")
+	err = ioutil.WriteFile(privateKeyPath, privateKey, 0600)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	publicKeyPath := filepath.Join(keyDir, "id_rsa.pub")
+	err = ioutil.WriteFile(publicKeyPath, publicKey, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("SSH keys saved for droplet '%s':\nPrivate key: %s\nPublic key: %s\n", dropletName, privateKeyPath, publicKeyPath)
+}
+
 func main() {
 	opts := &options{}
 
@@ -454,6 +544,7 @@ func main() {
 	flagSet.IntVar(&opts.amount, "amount", 2, "Specify the number of droplets to create, up to a maximum of 25.")
 	flagSet.BoolVar(&opts.sizes, "sizes", false, "List all available sizes at DigitalOcean")
 	flagSet.StringVar(&opts.size, "size", "", "Specify the size to check available regions")
+	flagSet.BoolVar(&opts.dryRun, "dryRun", false, "Dry run: delete droplets without removing key directories")
 
 	if err := flagSet.Parse(); err != nil {
 		log.Fatalf("Could not parse flags: %s\n", err)
@@ -470,7 +561,7 @@ func main() {
 	}
 
 	if opts.deleteAll {
-		deleteDroplets()
+		deleteDroplets(opts.dryRun)
 		return
 	}
 
