@@ -23,4 +23,9 @@ Flags:
    -sizes         List all available sizes at DigitalOcean
    -size string   Specify the size to check available regions
 ```
+    - todo's:
+        - install/setup tools/env on droplet
+    - ideas:
+        - interactive terminal for general setup
+
 
