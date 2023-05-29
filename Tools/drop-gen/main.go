@@ -244,7 +244,6 @@ func createDroplet(name string, count int) {
 		log.Fatal(err)
 	}
 
-	// Generate and write private key as PEM
 	privDER := x509.MarshalPKCS1PrivateKey(privateKey)
 	privBLK := pem.Block{
 		Type:    "RSA PRIVATE KEY",
@@ -253,33 +252,31 @@ func createDroplet(name string, count int) {
 	}
 
 	privPEM := pem.EncodeToMemory(&privBLK)
-	if err = ioutil.WriteFile("id_rsa", privPEM, 0600); err != nil {
+	if err := ioutil.WriteFile("id_rsa", privPEM, 0600); err != nil {
 		log.Fatal(err)
 	}
 
-	// Generate and write public key
 	pub, err := ssh.NewPublicKey(&privateKey.PublicKey)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	pubBytes := ssh.MarshalAuthorizedKey(pub)
-	if err = ioutil.WriteFile("id_rsa.pub", pubBytes, 0644); err != nil {
+	if err := ioutil.WriteFile("id_rsa.pub", pubBytes, 0644); err != nil {
 		log.Fatal(err)
 	}
 
-	// Create new SSH key on DO account
 	sshKey := SSHKey{
 		Name:      name,
 		PublicKey: string(pubBytes),
 	}
 
-	b, err := json.Marshal(sshKey)
+	sshKeyJSON, err := json.Marshal(sshKey)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	req, err := http.NewRequest("POST", "https://api.digitalocean.com/v2/account/keys", bytes.NewBuffer(b))
+	req, err := http.NewRequest("POST", "https://api.digitalocean.com/v2/account/keys", bytes.NewBuffer(sshKeyJSON))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -294,31 +291,49 @@ func createDroplet(name string, count int) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := ioutil.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	var result map[string]interface{}
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		log.Fatal(err)
+	}
 
 	keyID := strconv.Itoa(int(result["ssh_key"].(map[string]interface{})["id"].(float64)))
 
-	droplets := make([]Droplet, 0) // Track the created droplets
+	dropsJSON, err := ioutil.ReadFile("drops.json")
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	for i := 0; i < count; i++ {
-		// Create new Droplet with SSH key
+	existingDroplets := Droplets{}
+	if err := json.Unmarshal(dropsJSON, &existingDroplets); err != nil {
+		log.Fatal(err)
+	}
+
+	startCount := len(existingDroplets.Droplets) + 1
+
+	droplets := make([]Droplet, 0)
+
+	for i := startCount; i < startCount+count; i++ {
+		dropletName := fmt.Sprintf("%s%d", name, i)
+
 		droplet := CreateDroplet{
-			Name:    fmt.Sprintf("%s%d", name, i+1),
+			Name:    dropletName,
 			Region:  "nyc1",
 			Size:    "s-1vcpu-1gb",
 			Image:   "ubuntu-20-04-x64",
 			SSHKeys: []string{keyID},
 		}
 
-		b, err = json.Marshal(droplet)
+		dropletJSON, err := json.Marshal(droplet)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		req, err = http.NewRequest("POST", "https://api.digitalocean.com/v2/droplets", bytes.NewBuffer(b))
+		req, err := http.NewRequest("POST", "https://api.digitalocean.com/v2/droplets", bytes.NewBuffer(dropletJSON))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -326,20 +341,24 @@ func createDroplet(name string, count int) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+os.Getenv("DO_API_KEY"))
 
-		resp, err = client.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer resp.Body.Close()
 
-		body, _ = ioutil.ReadAll(resp.Body)
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
 
 		var dropletResponse CreateDropletResponse
-		json.Unmarshal(body, &dropletResponse)
+		if err := json.Unmarshal(body, &dropletResponse); err != nil {
+			log.Fatal(err)
+		}
 
 		fmt.Printf("Created droplet with ID: %d\n", dropletResponse.Droplet.ID)
 
-		// Retrieve droplet details to include size information
 		dropletURL := fmt.Sprintf("https://api.digitalocean.com/v2/droplets/%d", dropletResponse.Droplet.ID)
 		req, err = http.NewRequest("GET", dropletURL, nil)
 		if err != nil {
@@ -355,30 +374,30 @@ func createDroplet(name string, count int) {
 		}
 		defer resp.Body.Close()
 
-		body, _ = ioutil.ReadAll(resp.Body)
-		// fmt.Println(string(body)) // Print the response body
+		body, err = ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
 
 		var dropletDetails Droplet
-		json.Unmarshal(body, &dropletDetails)
+		if err := json.Unmarshal(body, &dropletDetails); err != nil {
+			log.Fatal(err)
+		}
 
-		// Create new Droplet object with details
 		newDroplet := Droplet{
 			ID:     dropletResponse.Droplet.ID,
 			Name:   dropletResponse.Droplet.Name,
 			Region: dropletResponse.Droplet.Region,
-			Size:   dropletResponse.Droplet.Size.Slug, // Assign the droplet size slug from the response
+			Size:   dropletResponse.Droplet.Size.Slug,
 			Image:  dropletResponse.Droplet.Image,
 		}
 
 		droplets = append(droplets, newDroplet)
 	}
 
-	// Write droplet information to drops.json
-	drops := struct {
-		Droplets []Droplet `json:"droplets"`
-	}{Droplets: droplets}
+	existingDroplets.Droplets = append(existingDroplets.Droplets, droplets...)
 
-	dropsJSON, err := json.Marshal(drops)
+	dropsJSON, err = json.Marshal(existingDroplets)
 	if err != nil {
 		log.Fatal(err)
 	}
