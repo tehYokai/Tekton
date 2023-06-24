@@ -14,28 +14,6 @@
             - V2 will not allow vpn-less connections while switching VPN endpoints
     - deno version does not work
 
-- drop-gen
-    - go run main.go -h                
-```bash
-DigitalOcean Droplet Management
-
-Flags:
-   -drops         List all droplets
-   -dry           Dry run: delete all deployed droplets
-   -fleet string  Name of the fleet (default: droplet) (default "droplet")
-   -amount int    Specify the number of droplets to create, up to a maximum of 25. (default 2)
-   -sizes         List all available sizes at DigitalOcean
-   -size string   Specify the size to check available regions
-```
-    - todo's:
-        - createDroplet() ✅
-            - check for drops.json first
-                - based on that increment [name] if the [name] is already in drops.json 
-        - id_rsa folder ssh_keys/[dropName]/id_rsa ✅
-            - generating works
-            - deleting upon dry works aswell
-        - install/setup tools/env on droplet 🚧
-    - ideas:
-        - interactive terminal for general setup
+- drop-gen has evolved beyond the scope of tekton repository, it's a pretty solid codebase of 3000+ lines of code now, it's basic usage has been completed and scaled to a certain use, but i'm yet to add so much more. Drop-gen is but one of the 'idea' versions, you can use it as an inspiration.
 
 
