@@ -2,6 +2,10 @@
  The Ancient Greek noun tektōn is a common term for an artisan/craftsman, in particular a carpenter, woodworker, or builder. The term is frequently contrasted with an ironworker, or smith and stone-worker or mason.
 
 ## Tools
+- manager/manager.go
+    - `go run tg2.go -time 2m -task "coding manager"`
+    - it will create a tasks.csv file and append on what date for how long have you been doing the task for
+    - at the end it will speak out words - like an alarm
 - vpn-rotator
     - sh version works
         - V1 works, switches VPN connection every 60 seconds
